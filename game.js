@@ -3,73 +3,100 @@ import { createInterface } from "readline";
 import Table from "cli-table3";
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
-const getUserInput = (question) => new Promise((resolve) => rl.question(question, (answer) => resolve(answer.trim())));
+const ask = (q) => new Promise((res) => rl.question(q, (ans) => res(ans.trim())));
 
-const generateHMAC = (value, key) => createHmac("sha256", key).update(value.toString()).digest("hex");
-const generateFairValue = () => {
-    const secretKey = randomBytes(16).toString("hex");
-    const value = Math.floor(Math.random() * 6);
-    return { secretKey, value, hmac: generateHMAC(value, secretKey) };
+const generateHMAC = (val, key) => createHmac("sha256", key).update(val.toString()).digest("hex");
+
+const generateSecret = () => {
+    const key = randomBytes(32).toString("hex");
+    const val = Math.floor(Math.random() * 6);
+    return { key, val, hmac: generateHMAC(val, key) };
 };
 
 const parseDice = (args) => {
-    if (args.length < 3) throw new Error("Error: Provide at least three sets of dice.");
+    if (args.length < 3) throw new Error("Err: At least three dice are required.");
     return args.map(arg => {
-        const numbers = arg.split(",").map(n => parseInt(n, 10));
+        const numbers = arg.split(",").map(Number);
         if (numbers.length !== 6 || numbers.some(isNaN)) throw new Error("Invalid dice format.");
         return numbers;
     });
 };
 
-const displayOptions = (dice) => dice.forEach((die, i) => console.log(`${i + 1}: [${die.join(", ")}]`));
-
 const playGame = async (dice) => {
     console.log("\nWelcome to the Fair Dice Game!");
 
-    const computerFirstHMAC = generateFairValue();
-    console.log(`Computer's HMAC: ${computerFirstHMAC.hmac}`);
+    const firstMove = generateSecret();
+    console.log(`I selected a value in the range 0..1 (HMAC=${firstMove.hmac}).`);
 
-    const userFirstChoice = parseInt(await getUserInput("Enter 0 or 1 to decide who picks first: "), 10);
-    if (![0, 1].includes(userFirstChoice)) return console.log("Invalid input. Exiting.");
+    console.log("Gess my selection.");
+    console.log("0 - 0\n1 - 1\nX - exit\n? - help");
+    const userPick = await ask("Your selection: ");
+    if (!["0", "1"].includes(userPick)) return console.log("Invalid input. Exiting.");
 
-    console.log(`Computer's secret: ${computerFirstHMAC.value}`);
-    console.log(`You selected: ${userFirstChoice}`);
-    console.log(`First move goes to: ${((computerFirstHMAC.value + userFirstChoice) % 2 === 0) ? "Computer" : "User"}`);
+    console.log(`My selection: ${firstMove.val} (KEY=${firstMove.key}).`);
+    const firstMover = (firstMove.val + parseInt(userPick, 10)) % 2 === 0 ? "Computer" : "User";
+    console.log(`${firstMover} makes the first move.`);
 
-    displayOptions(dice);
-    const userChoice = parseInt(await getUserInput("Pick a die (1-3): "), 10);
-    if (userChoice < 1 || userChoice > dice.length) return console.log("Invalid choice. Exiting.");
+    const computerChoice = firstMover === "Computer" ? Math.floor(Math.random() * dice.length) : null;
+    if (computerChoice !== null) {
+        console.log(`I choose the [${dice[computerChoice].join(", ")}] dice.`);
+    }
 
-    const userDie = dice[userChoice - 1];
-    const computerDie = dice.find((_, i) => i !== (userChoice - 1));
-    console.log(`You: ${userDie.join(", ")}`);
-    console.log(`Computer: ${computerDie.join(", ")}`);
+    console.log("Choose your dice:");
+    dice.forEach((die, i) => console.log(`${i} - ${die.join(", ")}`));
+    const userChoice = await ask("Your selection: ");
+    if (!dice[userChoice]) return console.log("Invalid choice. Exiting.");
+    console.log(`You choose the [${dice[userChoice].join(", ")}] dice.`);
 
-    const userRollHMAC = generateFairValue();
-    const computerRollHMAC = generateFairValue();
-    console.log(`Computer's roll HMAC: ${computerRollHMAC.hmac}`);
+    const userDie = dice[userChoice];
+    const computerDie = dice[computerChoice !== null ? computerChoice : dice.findIndex((_, i) => i !== userChoice)];
 
-    const userRollChoice = parseInt(await getUserInput("Enter a number (0-5) for your roll: "), 10);
-    if (userRollChoice < 0 || userRollChoice > 5) return console.log("Invalid input. Exiting.");
+    const computerRoll = generateSecret();
+    console.log(`I selected a value in the range 0..5 (HMAC=${computerRoll.hmac}).`);
+    console.log("Add your number modulo 6.");
+    console.log("0 - 0\n1 - 1\n2 - 2\n3 - 3\n4 - 4\n5 - 5\nX - exit\n? - help");
 
-    const finalUserRoll = userDie[(userRollHMAC.value + userRollChoice) % 6];
-    const finalComputerRoll = computerDie[(computerRollHMAC.value + userRollChoice) % 6];
+    const userRollChoice = await ask("Your selection: ");
+    if (!["0", "1", "2", "3", "4", "5"].includes(userRollChoice)) return console.log("Invalid input. Exiting.");
 
-    console.log(`Computer's secret: ${computerRollHMAC.value}`);
-    console.log(`Final rolls - You: ${finalUserRoll}, Computer: ${finalComputerRoll}`);
-    console.log(finalUserRoll > finalComputerRoll ? "You win!" : finalUserRoll < finalComputerRoll ? "Computer wins!" : "It's a tie!");
+    console.log(`My number is ${computerRoll.val} (KEY=${computerRoll.key}).`);
+    const finalComputerRoll = computerDie[(computerRoll.val + parseInt(userRollChoice, 10)) % 6];
+    console.log(`The fair number generation result is ${computerRoll.val} + ${userRollChoice} = ${(computerRoll.val + parseInt(userRollChoice, 10)) % 6} (mod 6).`);
+    console.log(`My roll result is ${finalComputerRoll}.`);
+
+    const userRoll = generateSecret();
+    console.log(`I selected a value in the range 0..5 (HMAC=${userRoll.hmac}).`);
+    console.log("Add your number modulo 6.");
+
+    const userFinalRollChoice = await ask("Your selection: ");
+    if (!["0", "1", "2", "3", "4", "5"].includes(userFinalRollChoice)) return console.log("Invalid input. Exiting.");
+
+    console.log(`My number is ${userRoll.val} (KEY=${userRoll.key}).`);
+    const finalUserRoll = userDie[(userRoll.val + parseInt(userFinalRollChoice, 10)) % 6];
+    console.log(`The fair number generation result is ${userRoll.val} + ${userFinalRollChoice} = ${(userRoll.val + parseInt(userFinalRollChoice, 10)) % 6} (mod 6).`);
+    console.log(`Your roll result is ${finalUserRoll}.`);
+
+    if (finalUserRoll > finalComputerRoll) {
+        console.log(`You win (${finalUserRoll} > ${finalComputerRoll})!`);
+    } else if (finalUserRoll < finalComputerRoll) {
+        console.log(`Computer wins (${finalUserRoll} < ${finalComputerRoll})!`);
+    } else {
+        console.log("It's a tie!");
+    }
 
     const table = new Table({ head: ["Die", "1", "2", "3", "4", "5", "6"] });
-    dice.forEach((die, i) => table.push({ [`Dice ${i + 1}`]: die }));
+    dice.forEach((die, i) => table.push({ [`Dice ${i}`]: die }));
     console.log("\nProbability Table:\n" + table.toString());
 
     rl.close();
 };
 
 try {
-    const dice = parseDice(process.argv.slice(2));
-    playGame(dice);
-} catch (error) {
-    console.error(error.message);
+    playGame(parseDice(process.argv.slice(2)));
+} catch (err) {
+    console.error(err.message);
     rl.close();
 }
+
+
+
